@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # coding: utf-8
 
 '''
@@ -14,11 +14,14 @@
 
 from __future__ import with_statement
 
+from io import open
 from collections import defaultdict
-from itertools import chain
-from optparse import OptionParser, TitledHelpFormatter
+from itertools import chain, takewhile
 from subprocess import Popen, call
+from textwrap import dedent
+from hashlib import sha256
 
+import argparse
 import filecmp
 import fnmatch
 import logging
@@ -27,6 +30,10 @@ import re
 import shutil
 import sys
 import time
+try:
+    import notify2
+except ImportError:
+    notify2 = None
 
 __author__ = 'Marc Schlaich'
 __version__ = '0.4dev'
@@ -53,14 +60,18 @@ NO_LATEX_ERROR = (
     'Is your latex distribution under your PATH?'
 )
 
+log = logging.getLogger(__name__)
+log.addHandler(logging.StreamHandler()) 
 
-class LatexMaker(object):
+class LatexMaker:
     '''
     Main class for generation process.
     '''
-    def __init__(self, project_name, opt):
+    def __init__(self, project_name, opt, log=None):
         self.opt = opt
-        self.log = self._setup_logger()
+        self.log = log
+        if self.log == None: 
+            self.log = globals()['log']
 
         if project_name == '.texlipse':
             self.project_name = self._parse_texlipse_config()
@@ -70,7 +81,9 @@ class LatexMaker(object):
         if self.project_name.endswith('.tex'):
             self.project_name = self.project_name[:-4]
 
-        if self.opt.pdf:
+        if self.opt.command:
+            self.latex_cmd = self.opt.command
+        elif self.opt.pdf:
             self.latex_cmd = 'pdflatex'
         else:
             self.latex_cmd = 'latex'
@@ -79,17 +92,6 @@ class LatexMaker(object):
         self.glossaries = dict()
         self.latex_run_counter = 0
         self.bib_file = ''
-
-    def _setup_logger(self):
-        '''Set up a logger.'''
-        log = logging.getLogger('latexmk.py')
-
-        handler = logging.StreamHandler()
-        log.addHandler(handler)
-
-        if self.opt.verbose:
-            log.setLevel(logging.INFO)
-        return log
 
     def _parse_texlipse_config(self):
         '''
@@ -103,9 +105,7 @@ class LatexMaker(object):
         if not os.path.isfile('.texlipse'):
             time.sleep(0.1)
             if not os.path.isfile('.texlipse'):
-                self.log.error('! Fatal error: File .texlipse is missing.')
-                self.log.error('! Exiting...')
-                sys.exit(1)
+                self._fatal_error('! Fatal error: File .texlipse is missing.')
 
         with open('.texlipse') as fobj:
             content = fobj.read()
@@ -116,9 +116,7 @@ class LatexMaker(object):
                           % project_name)
             return project_name
         else:
-            self.log.error('! Fatal error: Parsing .texlipse failed.')
-            self.log.error('! Exiting...')
-            sys.exit(1)
+            self._fatal_error('! Fatal error: Parsing .texlipse failed.')
 
     def _read_latex_files(self):
         '''
@@ -141,10 +139,10 @@ class LatexMaker(object):
 
         fname = '%s.toc' % self.project_name
         if os.path.isfile(fname):
-            with open(fname) as fobj:
-                toc_file = fobj.read()
+            with open(fname, 'rb') as fobj:
+                toc_sha = hashlib.sha265(fobj.read()).digest()
         else:
-            toc_file = ''
+            toc_sha = ''
 
         gloss_files = dict()
         for gloss in self.glossaries:
@@ -154,17 +152,17 @@ class LatexMaker(object):
                 with open(filename) as fobj:
                     gloss_files[gloss] = fobj.read()
 
-        return cite_counter, toc_file, gloss_files
+        return cite_counter, toc_sha, gloss_files
 
-    def _is_toc_changed(self, toc_file):
+    def _is_toc_changed(self, toc_sha):
         '''
         Test if the *.toc file has changed during
         the first latex run.
         '''
         fname = '%s.toc' % self.project_name
         if os.path.isfile(fname):
-            with open(fname) as fobj:
-                if fobj.read() != toc_file:
+            with open(fname, 'rb') as fobj:
+                if hashlib.sha256(fobj.read()).digest() != toc_sha:
                     return True
 
     def _need_bib_run(self, old_cite_counter):
@@ -200,6 +198,13 @@ class LatexMaker(object):
             if not filecmp.cmp(new, old):
                 return True
 
+    def _fatal_error(self, msg):
+        '''
+        Log the error to the logger and raise a LatexMkError
+        '''
+        self.log.error(msg)
+        raise LatexMkError(msg)
+
     def read_glossaries(self):
         '''
         Read all existing glossaries in the main aux-file.
@@ -223,16 +228,19 @@ class LatexMaker(object):
         if errors:
             self.log.error('! Errors occurred:')
 
-            self.log.error('\n'.join(
+            error = '\n'.join(
                 [error.replace('\r', '').strip() for error
                 in chain(*errors) if error.strip()]
-            ))
+            )
+            
+            self.log.error(error)
 
             self.log.error('! See "%s.log" for details.' % self.project_name)
 
             if self.opt.exit_on_error:
-                self.log.error('! Exiting...')
-                sys.exit(1)
+                raise LatexMkError('\n'.join((error, 
+                    'See "{}.log" for details.'.format(self.project_name))
+                ))
 
     def generate_citation_counter(self):
         '''
@@ -246,7 +254,7 @@ class LatexMaker(object):
             main_aux = fobj.read()
         cite_counter[filename] = _count_citations(filename)
 
-        for match in re.finditer(r'\\@input\{(.*.aux)\}', main_aux):
+        for match in re.finditer(r'\\@input\{(.*\.aux)\}', main_aux):
             filename = match.groups()[0]
             try:
                 counter = _count_citations(filename)
@@ -264,20 +272,17 @@ class LatexMaker(object):
         self.log.info('Running %s...' % self.latex_cmd)
         cmd = [self.latex_cmd]
         cmd.extend(LATEX_FLAGS)
-        cmd.append('%s.tex' % self.project_name)
+        cmd.extend(['-jobname', self.project_name, '%s.tex' % self.project_name])
+
         try:
             with open(os.devnull, 'w') as null:
                 Popen(cmd, stdout=null, stderr=null).wait()
         except OSError:
-            self.log.error(NO_LATEX_ERROR % self.latex_cmd)
+            self._fatal_error(NO_LATEX_ERROR % self.latex_cmd)
         self.latex_run_counter += 1
 
         with open('%s.log' % self.project_name) as fobj:
             self.out = fobj.read()
-        try:
-            self.out = self.out.decode(sys.getdefaultencoding())
-        except UnicodeDecodeError:
-            pass
         self.check_errors()
 
     def bibtex_run(self):
@@ -289,8 +294,7 @@ class LatexMaker(object):
             with open(os.devnull, 'w') as null:
                 Popen(['bibtex', self.project_name], stdout=null).wait()
         except OSError:
-            self.log.error(NO_LATEX_ERROR % 'bibtex')
-            sys.exit(1)
+            self._fatal_error(NO_LATEX_ERROR % 'bibtex')
 
         shutil.copy('%s.bib' % self.bib_file,
                     '%s.bib.old' % self.bib_file)
@@ -329,8 +333,7 @@ class LatexMaker(object):
                     with open(os.devnull, 'w') as null:
                         Popen(cmd, stdout=null).wait()
                 except OSError:
-                    self.log.error(NO_LATEX_ERROR % 'makeindex')
-                    sys.exit(1)
+                    self._fatal_error(NO_LATEX_ERROR % 'makeindex')
                 gloss_changed = True
 
         return gloss_changed
@@ -338,7 +341,6 @@ class LatexMaker(object):
     def open_preview(self):
         '''
         Try to open a preview of the generated document.
-        Currently only supported on Windows.
         '''
         self.log.info('Opening preview...')
         if self.opt.pdf:
@@ -357,10 +359,13 @@ class LatexMaker(object):
         elif sys.platform == 'darwin':
             call(['open', filename])
         else:
-            self.log.error(
-                    'Preview-Error: Preview function is currently not '
-                    'supported on Linux.'
-                )
+        # Works on most Linuxes
+            try:
+                call(['xdg-open', filename])
+            except OSError as e:
+                self.log.error('Preview-Error: opening previewer failed with '
+                    'the following message:\n'
+                    + str(e))
 
     def need_latex_rerun(self):
         '''
@@ -378,13 +383,13 @@ class LatexMaker(object):
         if self.opt.clean:
             self.old_dir = os.listdir('.')
 
-        cite_counter, toc_file, gloss_files = self._read_latex_files()
+        cite_counter, toc_sha, gloss_files = self._read_latex_files()
 
         self.latex_run()
         self.read_glossaries()
 
         gloss_changed = self.makeindex_runs(gloss_files)
-        if gloss_changed or self._is_toc_changed(toc_file):
+        if gloss_changed or self._is_toc_changed(toc_sha):
             self.latex_run()
 
         if self._need_bib_run(cite_counter):
@@ -427,20 +432,41 @@ class LatexMaker(object):
         if self.opt.preview:
             self.open_preview()
 
+        msg = "'{}.tex' compiled".format(self.project_name)
+        self.log.info(msg)
+        if self.opt.notify:
+            notify(msg)
 
-class CustomFormatter(TitledHelpFormatter):
+
+class LatexMkError (Exception):
+    pass
+
+
+class NotifyHandler (logging.Handler):
     '''
-    Standard Formatter removes linkbreaks.
+    A Logging handler that sends messages to the Gnome notification system
+    using the 'notify-send' command. Default level is ERROR. This handler 
+    guards against infinite recursion of errors caused by notification failure.
     '''
-    def __init__(self):
-        TitledHelpFormatter.__init__(self)
+    def __init__(self, level=logging.ERROR, *args):
+        logging.Handler.__init__(self, *args, level=level)
+        #self.addFilter(notifyfilter)
 
-    def format_description(self, description):
-        '''
-        Description is manual formatted, no changes are done.
-        '''
-        return description
+    def emit(self, record):
+        notify('LatexMk error:', record.getMessage())
 
+# def notifyfilter(record):
+#     if isinstance(record.args, dict) and \
+#             record.args.get(__name__+'-recursing') == 'recursing':
+#         return False
+#     return True
+
+
+def notify(sum, msg=None):
+    if not msg is None:
+        notify2.Notification(sum, msg).show()
+    else:
+        notify2.Notification(sum).show()
 
 def _count_citations(aux_file):
     '''
@@ -461,63 +487,87 @@ def _count_citations(aux_file):
 
 def main():
     '''
-    Set up "optparse" and pass the options to
+    Set up "argparse" and pass the options to
     a new instance of L{LatexMaker}.
     '''
-    version = '%%prog %s' % __version__
-    usage = 'Usage: %prog [options] [filename]'
 
-    # Read description from doc
-    doc_text = ''
-    for line in __doc__.splitlines():
-        if line.find('#') == 0:
-            break
-        doc_text += '  %s\n' % line
+    # Read description from doc. Add a space because argparse removes empty 
+    # trailing lines from the description. 
+    doc_text = dedent(__doc__.split('\n#', 1)[0]) + ' '
 
-    description = ('Description\n'
-                   '===========\n'
-                   '%s'
-                   'Arguments\n'
-                   '=========\n'
-                   '  filename     input filename\n'
-                   '                 If omitted the current directory will\n'
-                   '                 be searched for a single *.tex file.'
-                   % doc_text)
-
-    parser = OptionParser(usage=usage, version=version,
-                          description=description,
-                          formatter=CustomFormatter())
-    parser.add_option('-c', '--clean',
+    parser = argparse.ArgumentParser(description=doc_text, formatter_class=
+                              argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('filename', default=None, nargs='?', 
+                      help='''input filename. If omitted the current directory
+                            will be searched for a single *.tex file. Specify 
+                            ".texlipse" to find the .tex file from a *.texlipse
+                            project file.''')
+    parser.add_argument('-c', '--clean',
                       action='store_true', dest='clean', default=False,
                       help='clean all temporary files after converting')
-    parser.add_option('-q', '--quiet',
-                      action='store_false', dest='verbose', default=True,
-                      help='don\'t print status messages to stdout')
-    parser.add_option('-n', '--no-exit',
+    parser.add_argument('-q', '--quiet',
+                      action='count', dest='quiet', default=0, 
+                      help='don\'t print status messages to stdout. specify '
+                          'twice not to show error messages either.')
+    parser.add_argument('-d', '--debug', 
+                      action='store_const', dest='quiet', const=-1, default=0, 
+                      help='show debugging information')
+    parser.add_argument('-n', '--no-exit',
                       action='store_false', dest='exit_on_error', default=True,
                       help='don\'t exit if error occurs')
-    parser.add_option('-p', '--preview',
+    parser.add_argument('-N', '--notify', 
+                      action='store_true', dest='notify', default=False, 
+                      help='''Notify through the desktop environment if a 
+                          rebuild is finished and if errors occured. Currently 
+                          only available on Gnome.''')
+    parser.add_argument('-p', '--preview',
                       action='store_true', dest='preview', default=False,
                       help='try to open preview of generated document')
-    parser.add_option('--dvi', action='store_false', dest='pdf',
+    parser.add_argument('--dvi', action='store_false', dest='pdf',
                       default=True, help='use "latex" instead of pdflatex')
-    parser.add_option('--check-cite', action='store_true', dest='check_cite',
+    parser.add_argument('-t', '--tex-command', dest='command', 
+                      help='the latex compiler command to use')
+    parser.add_argument('--check-cite', action='store_true', dest='check_cite',
                       default=False,
                       help='check bibtex file for uncited entries')
+    parser.add_argument('--version', action='version', 
+                      version='%(prog)s {}'.format(__version__))
 
-    opt, args = parser.parse_args()
-    if len(args) == 0:
+    args, rest = parser.parse_known_args()
+    if rest:
+        parser.error(
+            'unrecognized arguments: {}. Specify at most one filename'
+                .format(' '.join(('"{}"'.format(r) for r in rest))))
+    if args.filename == None:
         tex_files = fnmatch.filter(os.listdir(os.getcwd()), '*.tex')
         if len(tex_files) == 1:
-            name = tex_files[0]
+            args.filename = tex_files[0]
+        elif len(tex_files) == 0:
+            parser.error('could not find one *.tex file in current directory')
         else:
-            parser.error('could not find a single *.tex file in current dir')
-    elif len(args) == 1:
-        name = args[0]
-    else:
-        parser.error('incorrect number of arguments')
+            parser.error('multiple *.tex files in current directory, specify only one')
+  
+    if args.notify:
+        if notify2 is None:
+            parser.error("Unable to use desktop notification ('-N', '--notify'). "
+                "Could not load package 'notify2'.")
+        else:
+            notify2.init('LatexMk')
+            log.addHandler(NotifyHandler())
 
-    LatexMaker(name, opt).run()
+    args.verbosity = \
+        {-1: logging.DEBUG, 0: logging.INFO, 
+         1: logging.ERROR, 2: logging.FATAL}[min(args.quiet, 2)]
+    log.setLevel(args.verbosity)
+
+    log.debug('arguments: '+str(args))
+    
+    try:
+        LatexMaker(args.filename, args, log=log).run()
+    except LatexMkError as e:
+        # The exceptions message is already logged
+        log.error('! Exiting...')
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()
