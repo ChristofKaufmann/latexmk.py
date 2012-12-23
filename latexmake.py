@@ -444,12 +444,13 @@ class LatexWatcher (object):
                     continue
                 pth = l.split(' ', 1)[1]
                 if not self.args.watchsystem:
+                    # currently unix only. What would the windows version look like?
                     spath = path.abspath(pth).lstrip(path.pathsep)
                     if spath.startswith(('usr', 'lib', 'etc')):
                         continue
                 # add it to the watchlist
                 if not self.watcher.path(pth):
-                    self.watcher.add(pth)
+                    self.add_watch(pth)
                     try:
                         del old_watches[pth]
                     except KeyError:
@@ -480,7 +481,7 @@ class LatexMkError (Exception):
 class NotifyHandler (logging.Handler):
     '''
     A Logging handler that sends messages to the Gnome notification system
-    using the 'notify-send' command. Default level is ERROR. 
+    using the notify2 library. Default level is ERROR. 
     '''
     def __init__(self, level=logging.ERROR, *args):
         logging.Handler.__init__(self, *args, level=level)
