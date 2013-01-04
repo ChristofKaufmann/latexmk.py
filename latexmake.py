@@ -8,11 +8,9 @@
     Python module for latexmk.py which completely automates
     the process of generating a LaTeX document.
 
-    :copyright: (c) 2012 by Marc Schlaich
-    :license: MIT, see LICENSE for more details.
+    :copyright: (c) 2012-2013 by Marc Schlaich and Jan Kanis
+    :license: GPL version 3 or later, see LICENSE for more details.
 '''
-
-from __future__ import with_statement
 
 from os import path
 from io import open
@@ -49,7 +47,7 @@ except ImportError:
 
 __author__ = 'Marc Schlaich'
 __version__ = '0.4dev'
-__license__ = 'MIT'
+__license__ = 'GPL3+'
 
 
 BIB_PATTERN = re.compile(r'\\bibdata\{(.*)\}')
@@ -280,6 +278,7 @@ class LatexMaker (object):
         self.log.info('Running bibtex...')
         try:
             with open(os.devnull, 'w') as null:
+                self.log.debug('Running bibtex '+self.project_name)
                 Popen(['bibtex', self.project_name], stdout=null).wait()
         except OSError as e:
             _fatal_error(NO_LATEX_ERROR % 'bibtex', error=e)
@@ -318,6 +317,7 @@ class LatexMaker (object):
                     cmd = ['makeindex', '-q', '-s',
                            '%s.ist' % self.project_name,
                            '-o', fname_in, fname_out]
+                    self.log.debug(' '.join(cmd))
                     with open(os.devnull, 'w') as null:
                         Popen(cmd, stdout=null).wait()
                 except OSError as e:

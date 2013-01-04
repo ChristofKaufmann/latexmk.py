@@ -4,28 +4,29 @@ from setuptools import setup
 
 
 setup(
-      name='latexmk.py',
+      name='latexmake',
       version='0.5dev',
-      description=('Latexmk.py completely automates the process of '
+      description=('Latexmake completely automates the process of '
                    'generating a LaTeX document.'),
       long_description=('Latexmk.py completely automates the process of '
                         'generating a LaTeX document. Given the source files '
                         'for a document, latexmk.py issues the appropriate '
                         'sequence of commands to generate a .dvi or .pdf '
-                        'version of the document.'),
-      author='Marc Schlaich',
-      author_email='marc.schlaich@googlemail.com',
-      url='http://github.com/schlamar/latexmk.py',
-      license='MIT',
+                        'version of the document. Latexmk.py can also watch '
+                        'source files for changes and rebuild automatically '
+                        'when changes happen.'),
+      author='Jan Kanis',
+      author_email='jan.code@jankanis.nl',
+      url='http://bitbucket.org/JanKanis/latexmake',
       platforms='any',
       classifiers=['Development Status :: 4 - Beta',
                    'Intended Audience :: End Users/Desktop',
-                   'License :: OSI Approved :: MIT License',
+                   'License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)',
                    'Operating System :: OS Independent',
                    'Programming Language :: Python',
                    'Topic :: Printing',
                    'Topic :: Text Processing :: Markup :: LaTeX'],
 
       py_modules=['latexmake'],
-      entry_points={'console_scripts': ['latexmk.py = latexmake:main']},
+      entry_points={'console_scripts': ['latexmake = latexmake:main']},
       )
