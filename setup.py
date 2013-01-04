@@ -1,11 +1,11 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 from setuptools import setup
 
 
 setup(
       name='latexmk.py',
-      version='0.4dev',
+      version='0.5dev',
       description=('Latexmk.py completely automates the process of '
                    'generating a LaTeX document.'),
       long_description=('Latexmk.py completely automates the process of '
@@ -28,5 +28,4 @@ setup(
 
       py_modules=['latexmake'],
       entry_points={'console_scripts': ['latexmk.py = latexmake:main']},
-      use_2to3=True
       )

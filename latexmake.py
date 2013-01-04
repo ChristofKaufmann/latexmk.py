@@ -14,6 +14,7 @@
 
 from __future__ import with_statement
 
+from os import path
 from io import open
 from collections import defaultdict
 from itertools import chain
@@ -32,9 +33,11 @@ import re
 import shutil
 import sys
 import time
+import copy
 
 try:
     from inotify.watcher import Watcher
+    from inotify import _inotify as inotify
 except ImportError:
     Watcher = None
 
@@ -53,7 +56,7 @@ BIB_PATTERN = re.compile(r'\\bibdata\{(.*)\}')
 CITE_PATTERN = re.compile(r'\\citation\{(.*)\}')
 BIBCITE_PATTERN = re.compile(r'\\bibcite\{(.*)\}\{(.*)\}')
 BIBENTRY_PATTERN = re.compile(r'@.*\{(.*),\s')
-ERROR_PATTTERN = re.compile(r'(?:^! (.*\nl\..*)$)|(?:^! (.*)$)|'
+ERROR_PATTERN = re.compile(r'(?:^! (.*\nl\..*)$)|(?:^! (.*)$)|'
                             '(No pages of output.)', re.M)
 LATEX_RERUN_PATTERN = re.compile('|'.join(
                         [r'LaTeX Warning: Reference .* undefined',
@@ -127,7 +130,7 @@ class LatexMaker (object):
         fname = '%s.toc' % self.project_name
         if os.path.isfile(fname):
             with open(fname, 'rb') as fobj:
-                toc_sha = hashlib.sha265(fobj.read()).digest()
+                toc_sha = sha256(fobj.read()).digest()
         else:
             toc_sha = ''
 
@@ -149,7 +152,7 @@ class LatexMaker (object):
         fname = '%s.toc' % self.project_name
         if os.path.isfile(fname):
             with open(fname, 'rb') as fobj:
-                if hashlib.sha256(fobj.read()).digest() != toc_sha:
+                if sha256(fobj.read()).digest() != toc_sha:
                     return True
 
     def _need_bib_run(self, old_cite_counter):
@@ -203,9 +206,11 @@ class LatexMaker (object):
         Check if errors occured during a latex run by
         scanning the output.
         '''
-        errors = ERROR_PATTTERN.findall(self.out)
+        errors = ERROR_PATTERN.findall(self.out)
         # "errors" is a list of tuples
-        if errors:
+        if not errors:
+            return True
+        else:
             self.log.error('! Errors occurred:')
 
             error = '\n'.join(
@@ -221,6 +226,7 @@ class LatexMaker (object):
                 raise LatexMkError('\n'.join((error, 
                     'See "{}.log" for details.'.format(self.project_name))
                 ))
+            return False
 
     def generate_citation_counter(self):
         '''
@@ -260,12 +266,12 @@ class LatexMaker (object):
         # the definition of LATEX_RERUN_PATTERN for details. 
         try:
             proc = Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            self.out = proc.stdout.read().decode('utf-8')
+            self.out = proc.stdout.read().decode('utf-8', 'replace')
         except OSError as e:
             _fatal_error(NO_LATEX_ERROR % self.latex_cmd, error=e)
 
         self.latex_run_counter += 1
-        self.check_errors()
+        return self.check_errors()
 
     def bibtex_run(self):
         '''
@@ -366,21 +372,21 @@ class LatexMaker (object):
 
         cite_counter, toc_sha, gloss_files = self._read_latex_files()
 
-        self.latex_run()
+        ok = self.latex_run()
         self.read_glossaries()
 
         gloss_changed = self.makeindex_runs(gloss_files)
         if gloss_changed or self._is_toc_changed(toc_sha):
-            self.latex_run()
+            ok = self.latex_run()
 
         if self._need_bib_run(cite_counter):
             self.bibtex_run()
-            self.latex_run()
+            ok = self.latex_run()
 
         while (self.latex_run_counter < MAX_RUNS):
             if not self.need_latex_rerun():
                 break
-            self.latex_run()
+            ok = self.latex_run()
 
         if self.opt.check_cite:
             cites = set()
@@ -396,7 +402,7 @@ class LatexMaker (object):
             for match in BIBENTRY_PATTERN.finditer(bib_content):
                 name = match.groups()[0]
                 if name not in cites:
-                    self.log.info('Bib entry not cited: "%s"' % name)
+                    self.log.warn('Bib entry not cited: "%s"' % name)
 
         if self.opt.clean:
             ending = '.dvi'
@@ -413,10 +419,66 @@ class LatexMaker (object):
         if self.opt.preview:
             self.open_preview()
 
-        msg = "{}.tex compiled".format(self.project_name)
-        self.log.info(msg)
-        if self.opt.notify:
-            notify(msg, icon='face-smile')
+        if ok:
+            msg = "{}.tex compiled".format(self.project_name)
+            self.log.info(msg)
+            if self.opt.notify:
+                notify(msg, icon='face-smile')
+
+
+class PollEvent (object):
+    def __init__(self, name, mask):
+        self.name = name
+        self.mask = mask
+
+
+class PollWatcher (object):
+    """
+    A fallback watcher that conforms to the interface of 
+    inotify.watcher.Watcher but uses polling.
+    """
+
+    infinity = float('inf')
+
+    def __init__(self, sleep=2):
+        self.watchlist = {}
+        self.removed = set()
+        self.sleeptime = sleep
+
+    def add(self, pth):
+        self.watchlist[pth] = self.inifinity
+
+    def path(self, pth):
+        if pth in self.watchlist:
+            return (0, inotify.IN_MODIFY)
+        else:
+            return None
+
+    def remove_path(self, pth):
+        del self.watchlist[pth]
+        self.removed.discard(pth)
+
+    def watches(self):
+        for path in self.watchlist.keys():
+            yield path, 0, inotify.IN_MODIFY
+
+    def read(self, buf=None):
+        """A simple polling loop checking file's mtime"""
+        events = []
+        while not events:
+            for f,t in self.watchlist.items():
+                try:
+                    mtime = os.stat(f).st_mtime
+                    if mtime > t:
+                        events += PollEvent(f, inotify.IN_MODIFY)
+                        self.watchlist[f] = mtime
+                except OSError:
+                    events += PollEvent(f, inotify.IN_DELETE_SELF)
+                    self.removed.add(f)
+            if buf == 0:
+                break
+            time.sleep(self.sleeptime)
+        return events
 
 
 class LatexWatcher (object):
@@ -424,26 +486,40 @@ class LatexWatcher (object):
         self.project_name = project_name
         self.args = args
         self.log = log
-        if not '-recorder' in opt.texoptions:
-            opt.texoptions.insert(0, '-recorder')
+        if not '-recorder' in args.texoptions:
+            self.args.texoptions.insert(0, '-recorder')
 
-        self.watcher = Watcher()
-        self.watched_files = {}
+        if self.args.watchmethod == 'inotify' and Watcher:
+            self.watcher = Watcher()
+            self.log.debug("loaded inotify watcher")
+        else:
+            self.watcher = PollWatcher()
+            self.log.info("inotify not available, falling back on polling watcher")
+
+        self.add_watch(args.filename)
+        for w in args.watchfiles:
+            self.add_watch(w)
         
     def run(self):
-        self.build()
-
+        try:
+            self.build(preview=True)
+            while 1:
+                self.build()
+        except KeyboardInterrupt:
+            self.log.info('')
+            self.log.info("exiting")
 
     def update_files(self):
-        old_watches = {path: (wd, mask) for path, wd, mask in self.watcher.watches()}
-        with open('%s.fls' % self.project_name) as record:
-            for l in record:
+        old_watches = [path for path, wd, mask in self.watcher.watches()]
+        with open(self.project_name+'.fls') as record:
+            for l in record.readlines():
+                l = l.rstrip('\n')
                 if not l.startswith('INPUT '):
                     continue
-                if self.args.watchtexonly and not l.endswith('.tex'):
+                if self.args.texonly and not l.endswith('.tex'):
                     continue
                 pth = l.split(' ', 1)[1]
-                if not self.args.watchsystem:
+                if not self.args.watch_system:
                     # currently unix only. What would the windows version look like?
                     spath = path.abspath(pth).lstrip(path.pathsep)
                     if spath.startswith(('usr', 'lib', 'etc')):
@@ -451,27 +527,47 @@ class LatexWatcher (object):
                 # add it to the watchlist
                 if not self.watcher.path(pth):
                     self.add_watch(pth)
+                else:
                     try:
-                        del old_watches[pth]
+                        # It's still a current watch
+                        old_watches.remove(pth)
                     except KeyError:
                         pass
+        # remove files that are no longer a dependency
         for pth in old_watches:
             self.remove_watch(pth)
 
 
     def add_watch(self, pth):
+        self.log.debug("adding watch for "+pth)
         self.watcher.add(pth, 
             inotify.IN_MODIFY | inotify.IN_DELETE_SELF | inotify.IN_MOVE_SELF)
 
     def remove_watch(self, pth):
+        self.log.debug("removing watch for "+pth)
         self.watcher.remove_path(pth)
 
     def wait(self):
         '''wait for changes to files'''
-        xxx
+        events = self.watcher.read()
+        # wait a little since there are often multiple events close together
+        time.sleep(0.1)
+        events += self.watcher.read(0)
+        self.log.debug("events:"+''.join(
+            ("\n {} {}".format(e.path, '|'.join(inotify.decode_mask(e.mask))) for e in events)))
+        self.log.info("file(s) changed: "+' '.join((e.path for e in events)))
 
-    def build(self):
-        LatexMaker(self.project_name, self.args, log=log).run()
+    def build(self, preview=False):
+        maker_args = copy.copy(self.args)
+        maker_args.preview = preview
+        maker_args.exit_on_error = True
+        try:
+            LatexMaker(self.project_name, maker_args, log=log).run()
+        except LatexMkError as e:
+            if self.args.exit_on_error:
+                raise
+        self.update_files()
+        self.wait()
         
 
 class LatexMkError (Exception):
@@ -481,9 +577,9 @@ class LatexMkError (Exception):
 class NotifyHandler (logging.Handler):
     '''
     A Logging handler that sends messages to the Gnome notification system
-    using the notify2 library. Default level is ERROR. 
+    using the notify2 library. Default level is WARN. 
     '''
-    def __init__(self, level=logging.ERROR, *args):
+    def __init__(self, level=logging.WARN, *args):
         logging.Handler.__init__(self, *args, level=level)
         self.notification = notify2.Notification('')
         self.timestamp = 0
@@ -554,7 +650,8 @@ def notify(sum, msg='', icon=''):
     For some standard icon names, see
     http://standards.freedesktop.org/icon-naming-spec/icon-naming-spec-latest.html#names
     '''
-    notify2.Notification(sum, msg, icon=icon).show()
+    if notify2:
+        notify2.Notification(sum, msg, icon=icon).show()
 
 
 def _count_citations(aux_file):
@@ -593,7 +690,7 @@ def main():
                             project file.''')
     parser.add_argument('-f', dest='filename',
                       help='''the .tex file to watch. Same as the program's 
-                          first argument.'''
+                          first argument.''')
     parser.add_argument('-c', '--clean',
                       action='store_true', dest='clean', default=False,
                       help='clean all temporary files after converting')
@@ -622,23 +719,32 @@ def main():
     parser.add_argument('--check-cite', action='store_true', dest='check_cite',
                       default=False,
                       help='check bibtex file for uncited entries')
-    parser.add_argument('--pvc', 
+    parser.add_argument('--pvc', '--preview-continuously', 
                       dest='continuous', action='store_true', default=False, 
-                      help='''preview continuously. keep running, watching the 
-                          .tex file and any imported .tex files for changes 
+                      help='''preview continuously. Keep running, watching the 
+                          .tex file and any .tex dependencies for changes 
                           and rebuilding the document on changes. ''')
-    # parser.add_argument('--watch-system', action='store_true', default=False,
-    #                   help='''also watch system files. By default files under 
-    #                       /usr and /etc are not watched for changes.''')
-    # parser.add_argument('--watch-all', action='store_true', default=False,
-    #                   help='''Also watch imported files that do not end in .tex
-    #                       for changes.''')
+    parser.add_argument('-w', '--watch', 
+                      dest='watch', action='store_true', default=False, 
+                      help='''Turn on all options useful for running in the 
+                          background and building the latex file on changes. 
+                          This implies --pvc, -n and -N (if available).''')
+    parser.add_argument('--watch-system', action='store_true', default=False,
+                      help='''also watch system files. By default files under 
+                          /usr and /etc are not watched for changes.''')
+    parser.add_argument('--watch-all', 
+                      action='store_false', default=True, dest='texonly',
+                      help='''Also watch imported files that do not end in .tex
+                          for changes.''')
     parser.add_argument('--latex-options', 
                       action='append', dest='texoptions', nargs='+', default=[],
                       help='additional options to pass to latex')
-    # parser.add_argument('-w', '--watch', 
-    #                   dest='watch', nargs='+', default=[],
-    #                   help='also watch these files for changes')
+    parser.add_argument('--watchfile', 
+                      dest='watchfiles', nargs='+', default=[],
+                      help='also watch these files for changes')
+    parser.add_argument('--watchmethod', 
+                      nargs=1, choices=['inotify', 'poll'], default='inotify',
+                      help='specify the method used to detect file changes')
     parser.add_argument('--version', action='version', 
                       version='%(prog)s {}'.format(__version__))
 
@@ -665,6 +771,12 @@ def main():
     log.setLevel(args.verbosity)
 
     log.debug('arguments: '+str(args))
+
+    if args.watch:
+        args.continuous = True
+        args.exit_on_error = False
+        if notify2:
+            args.notify = True
     
     if args.notify:
         if notify2 is None:
@@ -679,7 +791,10 @@ def main():
                 "Failed to initialize DBus.")
 
     try:
-        LatexMaker(projectname(args.filename), args, log=log).run()
+        if args.continuous:
+            LatexWatcher(projectname(args.filename), args, log=log).run()
+        else:
+            LatexMaker(projectname(args.filename), args, log=log).run()
     except LatexMkError as e:
         # The exceptions message is already logged
         log.error('! Exiting...')
