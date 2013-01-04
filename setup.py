@@ -18,6 +18,7 @@ setup(
       author='Jan Kanis',
       author_email='jan.code@jankanis.nl',
       url='http://bitbucket.org/JanKanis/latexmake',
+      license='GPLv3+',
       platforms='any',
       classifiers=['Development Status :: 4 - Beta',
                    'Intended Audience :: End Users/Desktop',
