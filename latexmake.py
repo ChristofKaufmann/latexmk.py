@@ -46,7 +46,7 @@ except ImportError:
     notify2 = None
 
 __author__ = 'Marc Schlaich'
-__version__ = '0.4dev'
+__version__ = '0.5dev'
 __license__ = 'GPL3+'
 
 
@@ -80,23 +80,72 @@ NO_LATEX_ERROR = (
     'Is your latex distribution under your PATH?'
 )
 
+Glossdata = collections.namedtuple('Glossdata', 'ext_i ext_o sha changed'.split())
+
 log = logging.getLogger(__name__)
 log.addHandler(logging.StreamHandler()) 
+
+
+Changedata = collections.namedtuple('Changedata', 'mtime size sha texoutfile'.split())
+class ChangeTracker:
+    def __init__(self):
+        self.cache = {}
+
+    def remember(self, name):
+        '''remember file's content and mtime.'''
+        self.ischanged(name, renew=True)
+
+    def ischanged(self, name, *, renew=False):
+        '''
+        Return whether the file's content has changed. If `renew` is True, 
+        renew the remembered data. If the file was not remembered before, 
+        return True. The ammount of I/O done is kept as small as possible.
+        '''
+        # Lots of combinations to consider: (data in cache) X renew X (file exists)
+        # and we should not do unnecessary file accesses. 
+
+        mtime, size, sha = self.cache.get(name, (None, None, None))
+        if mtime is None and not renew: 
+            # file not remembered before
+            return True
+        try:
+            new_mtime = os.path.getmtime(name)
+            if new_mtime == mtime:
+                return False  # not changed, so no update needed
+
+            # If new_size differs the file has definately changed, if they're
+            # the same we can't be sure and need to check the file contents. 
+            new_size = os.path.getsize(name)
+            if new_size != size and not renew:
+                return True
+
+            with open(name) as f:
+                new_sha = sha256(f.read()).hexdigest()
+            if renew:
+                self.cache[name] = Changedata(new_mtime, new_size, new_sha)
+            return new_sha != sha
+
+        except OSError:
+            # file does not exist (anymore)
+            old_data = self.cache.get(name, None)
+            new_data = Changedata(0, 0, '')
+            if renew:
+                self.cache[name] = new_data
+            return old_data != new_data
+
 
 class LatexMaker (object):
     '''
     Main class for generation process.
     '''
-    def __init__(self, project_name, opt, log=None):
+    def __init__(self, project_name, opt):
         self.opt = opt
         self.project_name = project_name
         self.log = log
-        if self.log == None: 
-            self.log = globals()['log']
 
         if self.opt.command:
             self.latex_cmd = self.opt.command
-        elif self.opt.pdf:
+*        elif self.opt.pdf:
             self.latex_cmd = 'pdflatex'
         else:
             self.latex_cmd = 'latex'
@@ -106,6 +155,8 @@ class LatexMaker (object):
         self.latex_run_counter = 0
         self.bib_file = ''
 
+        self._read_latex_files()
+
     def _read_latex_files(self):
         '''
         Check if some latex output files exist
@@ -114,90 +165,98 @@ class LatexMaker (object):
 
             - Parsing *.aux for citations counter and
               existing glossaries.
-            - Getting content of files to detect changes.
+            - Getting a hash of files to detect changes.
                 - *.toc file
                 - all available glossaries files
         '''
-        if os.path.isfile('%s.aux' % self.project_name):
+        if os.path.isfile(self.project_name+'.aux'):
             cite_counter = self.generate_citation_counter()
-            self.read_glossaries()
+            self._read_glossaries()
         else:
-            cite_counter = {'%s.aux' % self.project_name:
+            cite_counter = {self.project_name+'.aux':
                             defaultdict(int)}
+        self.cite_counter = cite_counter
 
-        fname = '%s.toc' % self.project_name
-        if os.path.isfile(fname):
-            with open(fname, 'rb') as fobj:
-                toc_sha = sha256(fobj.read()).digest()
-        else:
-            toc_sha = ''
+        self._is_toc_changed()
 
         gloss_files = dict()
         for gloss in self.glossaries:
             ext = self.glossaries[gloss][1]
-            filename = '%s.%s' % (self.project_name, ext)
+            filename = '{}.{}'.format(self.project_name, ext)
             if os.path.isfile(filename):
                 with open(filename) as fobj:
                     gloss_files[gloss] = fobj.read()
 
-        return cite_counter, toc_sha, gloss_files
+        self.gloss_files = gloss_files
+        #return cite_counter, toc_sha, gloss_files
 
-    def _is_toc_changed(self, toc_sha):
+    def _is_toc_changed(self):
         '''
         Test if the *.toc file has changed during
         the first latex run.
         '''
-        fname = '%s.toc' % self.project_name
-        if os.path.isfile(fname):
+        try:
+            fname = self.project_name+'.toc'
             with open(fname, 'rb') as fobj:
-                if sha256(fobj.read()).digest() != toc_sha:
+                old_sha = self.toc_sha
+                self.toc_sha = sha256(fobj.read()).hexdigest()
+                if old_sha != self.toc_sha:
                     return True
+        except OSError: 
+            return True
 
-    def _need_bib_run(self, old_cite_counter):
+    def _need_bib_run(self):
         '''
         Determine if you need to run "bibtex".
         1. Check if *.bib exists.
         2. Check latex output for hints.
-        3. Test if the numbers of citations changed
-           during first latex run.
-        4. Examine *.bib for changes.
+        3. Examine *.bib for changes.
         '''
-        with open('%s.aux' % self.project_name) as fobj:
+        with open(self.project_name+'.aux') as fobj:
             match = BIB_PATTERN.search(fobj.read())
             if not match:
                 return False
             else:
                 self.bib_file = match.group(1)
 
-        if not os.path.isfile('%s.bib' % self.bib_file):
+        if not os.path.isfile(self.bib_file+'.bib'):
             self.log.warning('Could not find *.bib file.')
             return False
 
-        if (re.search('No file %s.bbl.' % self.project_name, self.out) or
-            re.search('LaTeX Warning: Citation .* undefined', self.out)):
+        if ('No file {}.bbl'.format(self.project_name) in self.out
+            or re.search('LaTeX Warning: Citation .* undefined', self.out)):
             return True
 
-        if old_cite_counter != self.generate_citation_counter():
-            return True
-
-        if os.path.isfile('%s.bib.old' % self.bib_file):
-            new = '%s.bib' % self.bib_file
-            old = '%s.bib.old' % self.bib_file
-            if not filecmp.cmp(new, old):
-                return True
+        with open(self.bib_file+'.bib', 'rb') as f:
+            new_sha = sha256(fobj.read()).hexdigest()
+            return self.bib_sha != new_sha
 
     def read_glossaries(self):
         '''
-        Read all existing glossaries in the main aux-file.
+        Read all existing glossaries in the main aux-file. Return True if there 
+        are changes in any of the glossaries and they need to be regenerated. 
         '''
-        filename = '%s.aux' % self.project_name
+        filename = self.project_name+'.aux'
         with open(filename) as fobj:
             main_aux = fobj.read()
 
-        pattern = r'\\@newglossary\{(.*)\}\{.*\}\{(.*)\}\{(.*)\}'
+        anychanged = False
+        pattern = br'\\@newglossary\{(.*)\}\{.*\}\{(.*)\}\{(.*)\}'
+        glossnone = Glossdata(None, None, None, None)
         for match in re.finditer(pattern, main_aux):
             name, ext_i, ext_o = match.groups()
-            self.glossaries[name] = (ext_i, ext_o)
+            try:
+                with open(name+ext_o, 'rb') as f:
+                    sha = sha256(fobj.read()).hexdigest()
+                    changed = sha != self.glossaries.get(name, glossnone).sha
+            except OSError:
+                sha = ''
+                changed = True
+            anychanged |= changed
+            self.glossaries[name] = Glossdata(ext_i, ext_o, sha, changed)
+        
+        return anychanged
+
 
     def check_errors(self):
         '''
@@ -218,22 +277,22 @@ class LatexMaker (object):
             
             self.log.error(error)
 
-            self.log.error('! See "%s.log" for details.' % self.project_name)
+            self.log.error('! See "{}.log" for details.'.format(self.project_name))
 
             if self.opt.exit_on_error:
-                raise LatexMkError('\n'.join((error, 
-                    'See "{}.log" for details.'.format(self.project_name))
-                ))
+                raise LatexMkError('{}\nSee "{}.log" for details.'.format(
+                                    error, self.project_name))
             return False
 
     def generate_citation_counter(self):
         '''
         Generate dictionary with the number of citations in all
         included files. If this changes after the first latex run,
-        you have to run "bibtex".
+        you have to run "bibtex". The returned dict has this type:
+        dict(str -> defaultdict(str -> int))
         '''
         cite_counter = dict()
-        filename = '%s.aux' % self.project_name
+        filename = self.project_name+'.aux'
         with open(filename) as fobj:
             main_aux = fobj.read()
         cite_counter[filename] = _count_citations(filename)
@@ -253,7 +312,8 @@ class LatexMaker (object):
         '''
         Start latex run.
         '''
-        self.log.info('Running %s...' % self.latex_cmd)
+        self.out = ''
+        self.log.info('Running {}...'.format(self.latex_cmd))
         cmd = [self.latex_cmd]
         cmd.extend(LATEX_FLAGS + ['-jobname', self.project_name])
         cmd.extend(self.opt.texoptions)
@@ -263,8 +323,18 @@ class LatexMaker (object):
         # Not all relevant errors end up in the log, so we parse stderr. See 
         # the definition of LATEX_RERUN_PATTERN for details. 
         try:
-            proc = Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            self.out = proc.stdout.read().decode('utf-8', 'replace')
+            proc = Popen(cmd, 
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         close_fds=True, bufsize=1024)
+            if self.opt.texoutput:
+                r = proc.stdout.read(1024)
+                while r:
+                    sys.stdout.buffer.write(r)
+                    self.out += r.decode('utf-8', 'replace')
+                    r = proc.stdout.read(1024)
+            else:
+                self.out = proc.stdout.read().decode('utf-8', 'replace')
+            proc.wait()
         except OSError as e:
             _fatal_error(NO_LATEX_ERROR % self.latex_cmd, error=e)
 
@@ -279,52 +349,63 @@ class LatexMaker (object):
         try:
             with open(os.devnull, 'w') as null:
                 self.log.debug('Running bibtex '+self.project_name)
-                Popen(['bibtex', self.project_name], stdout=null).wait()
+                out = sys.stdout if self.opt.texoutput else null
+                call(['bibtex', self.project_name], stdout=out)
         except OSError as e:
             _fatal_error(NO_LATEX_ERROR % 'bibtex', error=e)
 
-        shutil.copy('%s.bib' % self.bib_file,
-                    '%s.bib.old' % self.bib_file)
+        with open(self.bib_file+'.bib', 'rb') as f:
+            self.bib_sha = sha256(fobj.read()).hexdigest()
 
-    def makeindex_runs(self, gloss_files):
+    def makeindex_runs(self):
         '''
         Check for each glossary if it has to be regenerated
         with "makeindex".
 
         @return: True if "makeindex" was called.
         '''
-        gloss_changed = False
-        for gloss in self.glossaries:
-            make_gloss = False
-            ext_i, ext_o = self.glossaries[gloss]
-            fname_in = '%s.%s' % (self.project_name, ext_i)
-            fname_out = '%s.%s' % (self.project_name, ext_o)
-            if re.search('No file %s.' % fname_in, self.out):
-                make_gloss = True
-            if not os.path.isfile(fname_out):
-                make_gloss = True
-            else:
-                with open(fname_out) as fobj:
-                    try:
-                        if gloss_files[gloss] != fobj.read():
-                            make_gloss = True
-                    except KeyError:
-                        make_gloss = True
+        anychanged = any((gloss.changed for gloss in self.glossaries))
 
-            if make_gloss:
-                self.log.info('Running makeindex (%s)...' % gloss)
-                try:
-                    cmd = ['makeindex', '-q', '-s',
-                           '%s.ist' % self.project_name,
-                           '-o', fname_in, fname_out]
-                    self.log.debug(' '.join(cmd))
-                    with open(os.devnull, 'w') as null:
-                        Popen(cmd, stdout=null).wait()
-                except OSError as e:
-                    _fatal_error(NO_LATEX_ERROR % 'makeindex', error=e)
-                gloss_changed = True
+        # This code calls 'makeindex' for each individual index. Adapt it if 
+        # you need some special behavior. We use 'makeglossaries', which can 
+        # automatically find what commands need to be run on what files. It is
+        # part of the glossaries latex package.
+        # 
+        # for gloss in self.glossaries:
+        #     ext_i, ext_o, sha, changed = self.glossaries[gloss]
+        #     anychanged |= changed
+        #     fname_in = self.project_name+ext_i
+        #     fname_out = self.project_name+ext_o
 
-        return gloss_changed
+        #     if changed and self.opt.makeindex:
+        #         self.log.info('Running makeindex (%s)...' % gloss)
+        #         try:
+        #             cmd = ['makeindex', '-q', '-s',
+        #                    self.project_name+'.ist',
+        #                    '-o', 
+        #                    self.project_name+ext_i, 
+        #                    self.project_name+ext_o]
+        #             self.log.debug(' '.join(cmd))
+        #             with open(os.devnull, 'w') as null:
+        #                 Popen(cmd, stdout=null).wait()
+        #         except OSError as e:
+        #             _fatal_error(NO_LATEX_ERROR % 'makeindex', error=e)
+
+        if not anychanged:
+            return False
+
+        try:
+            with open(os.devnull, 'w') as null:
+                out = sys.stdout if self.opt.texoutput else null
+                ret = call(['makeglossaries']+self.opt.glossariesoptions, stdout=out)
+        except OSError as e:
+            _fatal_error(NO_LATEX_ERROR % 'makeglossaries', error=e)
+
+        if not self.opt.texoutput: out.close()
+        if ret != 0:
+            self.log.error('makeglossaries exited with error code {}'.format(ret))
+
+        return True
 
     def open_preview(self):
         '''
@@ -335,7 +416,7 @@ class LatexMaker (object):
             ext = 'pdf'
         else:
             ext = 'dvi'
-        filename = '%s.%s' % (self.project_name, ext)
+        filename = self.project_name+ext
         if sys.platform == 'win32':
             try:
                 os.startfile(filename)
@@ -370,27 +451,40 @@ class LatexMaker (object):
         if self.opt.clean:
             self.old_dir = os.listdir('.')
 
-        cite_counter, toc_sha, gloss_files = self._read_latex_files()
-
         ok = self.latex_run()
         self.read_glossaries()
 
-        gloss_changed = self.makeindex_runs(gloss_files)
-        if gloss_changed or self._is_toc_changed(toc_sha):
+        gloss_changed = self.makeindex_runs()
+        if gloss_changed or self._is_toc_changed():
             ok = self.latex_run()
 
-        if self._need_bib_run(cite_counter):
-            self.bibtex_run()
-            ok = self.latex_run()
 
-        while (self.latex_run_counter < MAX_RUNS):
-            if not self.need_latex_rerun():
+        changed = True
+        while changed and self.latex_run_counter < MAX_RUNS:
+            ok = self.latex_run()
+            changed = False
+            if self._is_toc_changed():
+                changed = True
+            if self._need_bib_run():
+                self.bibtex_run()
+                changed = True
+            if self.check_indexes():
+                self.makeindex_runs()
+                changed = True
+            
+
+            
+            self.need_latex_rerun() or gloss_changed:
+            if self._need_bib_run():
+                self.bibtex_run()
+            gloss_changed = self.makeindex_runs()
+            ok = self.latex_run()
+            if self.latex_run_counter >= MAX_RUNS:
                 break
-            ok = self.latex_run()
 
         if self.opt.check_cite:
             cites = set()
-            with open('%s.aux' % self.project_name) as fobj:
+            with open(self.project_name+'.aux') as fobj:
                 aux_content = fobj.read()
 
             for match in BIBCITE_PATTERN.finditer(aux_content):
@@ -482,7 +576,7 @@ class PollWatcher (object):
 
 
 class LatexWatcher (object):
-    def __init__(self, project_name, args, log=None):
+    def __init__(self, project_name, args):
         self.project_name = project_name
         self.args = args
         self.log = log
@@ -499,10 +593,18 @@ class LatexWatcher (object):
         self.add_watch(args.filename)
         for w in args.watchfiles:
             self.add_watch(w)
+
+        maker_args = copy.copy(self.args)
+        maker_args.preview = False
+        maker_args.exit_on_error = True
+        self.maker = LatexMaker(self.project_name, maker_args)
         
     def run(self):
         try:
-            self.build(preview=True)
+            self.build()
+            # Open preview just once
+            if self.args.preview:
+                self.maker.open_preview()
             while 1:
                 self.build()
         except KeyboardInterrupt:
@@ -531,7 +633,7 @@ class LatexWatcher (object):
                     try:
                         # It's still a current watch
                         old_watches.remove(pth)
-                    except KeyError:
+                    except ValueError:
                         pass
         # remove files that are no longer a dependency
         for pth in old_watches:
@@ -557,12 +659,9 @@ class LatexWatcher (object):
             ("\n {} {}".format(e.path, '|'.join(inotify.decode_mask(e.mask))) for e in events)))
         self.log.info("file(s) changed: "+' '.join((e.path for e in events)))
 
-    def build(self, preview=False):
-        maker_args = copy.copy(self.args)
-        maker_args.preview = preview
-        maker_args.exit_on_error = True
+    def build(self):
         try:
-            LatexMaker(self.project_name, maker_args, log=log).run()
+            self.maker.run()
         except LatexMkError as e:
             if self.args.exit_on_error:
                 raise
@@ -689,21 +788,21 @@ def main():
                             ".texlipse" to find the .tex file from a *.texlipse
                             project file.''')
     parser.add_argument('-f', dest='filename',
-                      help='''the .tex file to watch. Same as the program's 
+                      help='''The .tex file to watch. Same as the program's 
                           first argument.''')
     parser.add_argument('-c', '--clean',
                       action='store_true', dest='clean', default=False,
-                      help='clean all temporary files after converting')
+                      help='Clean all temporary files after converting.')
     parser.add_argument('-q', '--quiet',
                       action='count', dest='quiet', default=0, 
-                      help='don\'t print status messages to stdout. specify '
+                      help='Don\'t print status messages to stdout. Specify '
                           'twice not to show error messages either.')
     parser.add_argument('-d', '--debug', 
                       action='store_const', dest='quiet', const=-1, default=0, 
-                      help='show debugging information')
+                      help='Show debugging information.')
     parser.add_argument('-n', '--no-exit',
                       action='store_false', dest='exit_on_error', default=True,
-                      help='don\'t exit if error occurs')
+                      help='Don\'t exit if error occurs.')
     parser.add_argument('-N', '--notify', 
                       action='store_true', dest='notify', default=False, 
                       help='''Notify through the desktop environment if a 
@@ -711,14 +810,16 @@ def main():
                           only available on Gnome.''')
     parser.add_argument('-p', '--preview',
                       action='store_true', dest='preview', default=False,
-                      help='try to open preview of generated document')
+                      help='Try to open preview of generated document.')
     parser.add_argument('--dvi', action='store_false', dest='pdf',
                       default=True, help='use "latex" instead of pdflatex')
     parser.add_argument('-t', '--tex-command', dest='command', 
-                      help='the latex compiler command to use')
+                      help='The latex compiler command to use.')
     parser.add_argument('--check-cite', action='store_true', dest='check_cite',
                       default=False,
-                      help='check bibtex file for uncited entries')
+                      help='Check bibtex file for uncited entries.')
+    parser.add_argument('-P', '--texoutput', action='store_true', default=False,
+                      help='Show the output of the called commands')
     parser.add_argument('--pvc', '--preview-continuously', 
                       dest='continuous', action='store_true', default=False, 
                       help='''preview continuously. Keep running, watching the 
@@ -730,7 +831,7 @@ def main():
                           background and building the latex file on changes. 
                           This implies --pvc, -n and -N (if available).''')
     parser.add_argument('--watch-system', action='store_true', default=False,
-                      help='''also watch system files. By default files under 
+                      help='''Also watch system files. By default files under 
                           /usr and /etc are not watched for changes.''')
     parser.add_argument('--watch-all', 
                       action='store_false', default=True, dest='texonly',
@@ -738,13 +839,16 @@ def main():
                           for changes.''')
     parser.add_argument('--latex-options', 
                       action='append', dest='texoptions', nargs='+', default=[],
-                      help='additional options to pass to latex')
+                      help='Additional options to pass to latex.')
+    parser.add_argument('--makeglossaries-options', 
+                      action='append', dest='glossariesoptions', nargs='+', default=[],
+                      help="Additional options to pass to `makeglossaries`.")
     parser.add_argument('--watchfile', 
                       dest='watchfiles', nargs='+', default=[],
-                      help='also watch these files for changes')
+                      help='Also watch these files for changes.')
     parser.add_argument('--watchmethod', 
                       nargs=1, choices=['inotify', 'poll'], default='inotify',
-                      help='specify the method used to detect file changes')
+                      help='Specify the method used to detect file changes.')
     parser.add_argument('--version', action='version', 
                       version='%(prog)s {}'.format(__version__))
 
@@ -754,7 +858,7 @@ def main():
             'unrecognized arguments: {}. Specify at most one filename'
                 .format(' '.join(('"{}"'.format(r) for r in rest))))
     if args.filename == None:
-        tex_files = fnmatch.filter(os.listdir(os.getcwd()), '*.tex')
+        tex_files = fnmatch.filter(os.listdir('.'), '*.tex')
         if len(tex_files) == 1:
             args.filename = tex_files[0]
         elif len(tex_files) == 0:
@@ -792,9 +896,9 @@ def main():
 
     try:
         if args.continuous:
-            LatexWatcher(projectname(args.filename), args, log=log).run()
+            LatexWatcher(projectname(args.filename), args).run()
         else:
-            LatexMaker(projectname(args.filename), args, log=log).run()
+            LatexMaker(projectname(args.filename), args).run()
     except LatexMkError as e:
         # The exceptions message is already logged
         log.error('! Exiting...')
