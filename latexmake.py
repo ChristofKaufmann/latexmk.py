@@ -531,7 +531,7 @@ class LatexWatcher (object):
                     try:
                         # It's still a current watch
                         old_watches.remove(pth)
-                    except KeyError:
+                    except ValueError:
                         pass
         # remove files that are no longer a dependency
         for pth in old_watches:
