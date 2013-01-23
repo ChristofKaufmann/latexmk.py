@@ -565,7 +565,13 @@ class LatexWatcher (object):
 
     def wait(self):
         '''wait for changes to files'''
-        events = self.watcher.read()
+        retry = True
+        while retry:
+            try:
+                events = self.watcher.read()
+            except OSError as e:
+                retry = e.errno == errno.EINTR
+
         # wait a little since there are often multiple events close together
         time.sleep(0.1)
         events += self.watcher.read(0)
