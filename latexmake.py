@@ -642,16 +642,21 @@ class LatexWatcher (object):
                     spath = path.abspath(pth).lstrip(path.pathsep)
                     if spath.startswith(('usr', 'lib', 'etc')):
                         continue
-                # add it to the watchlist
                 if not self.watcher.path(pth):
+                    # new file, add it to the watchlist
                     self.add_watch(pth)
                 else:
                     try:
                         # It's still a current watch
                         old_watches.remove(pth)
                     except ValueError:
+                        # sometimes the same file is read multiple times
                         pass
         # remove files that are no longer a dependency
+        if self.args.filename in old_watches:
+            raise LatexMkError(
+              "Filename {} is no longer present in LaTeX's list of inputs"
+              .format(self.args.filename))
         for pth in old_watches:
             self.remove_watch(pth)
 
