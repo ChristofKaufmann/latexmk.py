@@ -511,6 +511,7 @@ class LatexWatcher (object):
 
     def update_files(self):
         old_watches = [path for path, wd, mask in self.watcher.watches()]
+        old_watches.remove(self.args.filename)
         with open(self.project_name+'.fls') as record:
             for l in record.readlines():
                 l = l.rstrip('\n')
@@ -521,7 +522,7 @@ class LatexWatcher (object):
                 pth = l.split(' ', 1)[1]
                 if not self.args.watch_system:
                     # currently unix only. What would the windows version look like?
-                    spath = path.abspath(pth).lstrip(path.pathsep)
+                    spath = path.abspath(pth).lstrip(path.sep)
                     if spath.startswith(('usr', 'lib', 'etc')):
                         continue
                 # add it to the watchlist
