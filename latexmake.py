@@ -560,15 +560,17 @@ class LatexWatcher (object):
 
     def remove_watch(self, pth):
         self.log.debug("removing watch for "+pth)
-        import pdb; pdb.set_trace()
         self.watcher.remove_path(pth)
 
     def wait(self):
         '''wait for changes to files'''
+        watchmask = inotify.IN_MODIFY | inotify.IN_DELETE_SELF | inotify.IN_MOVE_SELF
         retry = True
         while retry:
             try:
-                events = self.watcher.read()
+                events = [e for e in self.watcher.read() if e.mask & watchmask]
+                if events:
+                    retry = False
             except OSError as e:
                 retry = e.errno == errno.EINTR
 
