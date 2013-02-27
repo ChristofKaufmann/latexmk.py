@@ -519,7 +519,7 @@ class LatexWatcher (object):
             self.log.info("exiting")
 
     def update_files(self):
-        old_watches = [path for path, wd, mask in self.watcher.watches() 
+        old_watches = [path for path, wd, mask in self.watcher.watches()
             if not path in self.args.watchfiles]
         with open(self.project_name+'.fls') as record:
             for l in record.readlines():
@@ -531,7 +531,7 @@ class LatexWatcher (object):
                 pth = l.split(' ', 1)[1]
                 if not self.args.watch_system:
                     # currently unix only. What would the windows version look like?
-                    spath = path.abspath(pth).lstrip(path.pathsep)
+                    spath = path.abspath(pth).lstrip(path.sep)
                     if spath.startswith(('usr', 'lib', 'etc')):
                         continue
                 if not self.watcher.path(pth):
@@ -560,6 +560,7 @@ class LatexWatcher (object):
 
     def remove_watch(self, pth):
         self.log.debug("removing watch for "+pth)
+        import pdb; pdb.set_trace()
         self.watcher.remove_path(pth)
 
     def wait(self):
