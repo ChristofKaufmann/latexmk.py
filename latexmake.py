@@ -519,7 +519,8 @@ class LatexWatcher (object):
             self.log.info("exiting")
 
     def update_files(self):
-        old_watches = [path for path, wd, mask in self.watcher.watches()]
+        old_watches = [path for path, wd, mask in self.watcher.watches() 
+            if not path in self.args.watchfiles]
         with open(self.project_name+'.fls') as record:
             for l in record.readlines():
                 l = l.rstrip('\n')
