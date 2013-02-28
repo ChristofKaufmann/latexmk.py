@@ -37,8 +37,10 @@ import errno
 try:
     from inotify.watcher import Watcher
     from inotify import _inotify as inotify
+    from inotify._inotify import IN_MODIFY, IN_DELETE_SELF, IN_MOVE_SELF
 except ImportError:
     Watcher = None
+    IN_MODIFY, IN_DELETE_SELF, IN_MOVE_SELF = 2, 1024, 2048
 
 try:
     import notify2
@@ -83,6 +85,8 @@ NO_LATEX_ERROR = (
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.StreamHandler()) 
+
+WATCH_MASK = IN_MODIFY | IN_DELETE_SELF | IN_MOVE_SELF
 
 class LatexMaker (object):
     '''
@@ -446,12 +450,14 @@ class PollWatcher (object):
         self.removed = set()
         self.sleeptime = sleep
 
-    def add(self, pth):
+    def add(self, pth, mask):
+        if mask != WATCH_MASK:
+            warnings.warn("PollWatcher.add does not support a nonstandard mask")
         self.watchlist[pth] = self.inifinity
 
     def path(self, pth):
         if pth in self.watchlist:
-            return (0, inotify.IN_MODIFY)
+            return (0, IN_MODIFY)
         else:
             return None
 
@@ -461,21 +467,25 @@ class PollWatcher (object):
 
     def watches(self):
         for path in self.watchlist.keys():
-            yield path, 0, inotify.IN_MODIFY
+            yield path, 0, IN_MODIFY
 
     def read(self, buf=None):
         """A simple polling loop checking file's mtime"""
         events = []
         while not events:
             for f,t in self.watchlist.items():
+                if f in self.removed: continue
                 try:
                     mtime = os.stat(f).st_mtime
                     if mtime > t:
-                        events += PollEvent(f, inotify.IN_MODIFY)
+                        events += PollEvent(f, IN_MODIFY)
                         self.watchlist[f] = mtime
-                except EnvironmentError:
-                    events += PollEvent(f, inotify.IN_DELETE_SELF)
-                    self.removed.add(f)
+                except OSError as e:
+                    if e.errno in (errno.EACCESS, errno.ELOOP, errno.ENOENT, errno.ENOTDIR):
+                        events += PollEvent(f, IN_DELETE_SELF)
+                        self.removed.add(f)
+                    else:
+                        raise
             if buf == 0:
                 break
             time.sleep(self.sleeptime)
@@ -556,7 +566,7 @@ class LatexWatcher (object):
     def add_watch(self, pth):
         self.log.debug("adding watch for "+pth)
         self.watcher.add(pth, 
-            inotify.IN_MODIFY | inotify.IN_DELETE_SELF | inotify.IN_MOVE_SELF)
+            IN_MODIFY | IN_DELETE_SELF | IN_MOVE_SELF)
 
     def remove_watch(self, pth):
         self.log.debug("removing watch for "+pth)
@@ -564,7 +574,7 @@ class LatexWatcher (object):
 
     def wait(self):
         '''wait for changes to files'''
-        watchmask = inotify.IN_MODIFY | inotify.IN_DELETE_SELF | inotify.IN_MOVE_SELF
+        watchmask = IN_MODIFY | IN_DELETE_SELF | IN_MOVE_SELF
         retry = True
         while retry:
             try:
