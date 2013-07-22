@@ -432,8 +432,8 @@ class LatexMaker (object):
 
 
 class PollEvent (object):
-    def __init__(self, name, mask):
-        self.name = name
+    def __init__(self, path, mask):
+        self.path = path
         self.mask = mask
 
 
@@ -443,8 +443,6 @@ class PollWatcher (object):
     inotify.watcher.Watcher but uses polling.
     """
 
-    infinity = float('inf')
-
     def __init__(self, sleep=2):
         self.watchlist = {}
         self.removed = set()
@@ -453,7 +451,7 @@ class PollWatcher (object):
     def add(self, pth, mask):
         if mask != WATCH_MASK:
             warnings.warn("PollWatcher.add does not support a nonstandard mask")
-        self.watchlist[pth] = self.inifinity
+        self.watchlist[pth] = os.path.getmtime(pth)
 
     def path(self, pth):
         if pth in self.watchlist:
@@ -478,11 +476,11 @@ class PollWatcher (object):
                 try:
                     mtime = os.stat(f).st_mtime
                     if mtime > t:
-                        events += PollEvent(f, IN_MODIFY)
+                        events.append(PollEvent(f, IN_MODIFY))
                         self.watchlist[f] = mtime
                 except OSError as e:
                     if e.errno in (errno.EACCESS, errno.ELOOP, errno.ENOENT, errno.ENOTDIR):
-                        events += PollEvent(f, IN_DELETE_SELF)
+                        events.append(PollEvent(f, IN_DELETE_SELF))
                         self.removed.add(f)
                     else:
                         raise
@@ -575,18 +573,17 @@ class LatexWatcher (object):
     def wait(self):
         '''wait for changes to files'''
         watchmask = IN_MODIFY | IN_DELETE_SELF | IN_MOVE_SELF
-        retry = True
-        while retry:
+        events = []
+        while not events:
             try:
                 events = [e for e in self.watcher.read() if e.mask & watchmask]
-                if events:
-                    retry = False
             except OSError as e:
-                retry = e.errno == errno.EINTR
+                if e.errno != errno.EINTR: raise
 
         # wait a little since there are often multiple events close together
         time.sleep(0.1)
-        events += self.watcher.read(0)
+        # clear any additional events
+        self.watcher.read(0)
         self.log.debug("events:"+''.join(
             ("\n {} {}".format(e.path, '|'.join(inotify.decode_mask(e.mask))) for e in events)))
         self.log.info("file(s) changed: "+' '.join((e.path for e in events)))
