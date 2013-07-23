@@ -3,21 +3,27 @@
 from setuptools import setup
 
 
+def get_version(fname='latexmake.py'):
+    with open(fname) as f:
+        for line in f:
+            if line.startswith('__version__'):
+                return eval(line.split('=')[-1])
+
+
+def get_long_description():
+    with open('README.rst') as f:
+        return f.read()
+
+
 setup(
       name='latexmake',
-      version='0.5dev',
+      version=get_version(),
       description=('Latexmake completely automates the process of '
                    'generating a LaTeX document.'),
-      long_description=('Latexmk.py completely automates the process of '
-                        'generating a LaTeX document. Given the source files '
-                        'for a document, latexmk.py issues the appropriate '
-                        'sequence of commands to generate a .dvi or .pdf '
-                        'version of the document. Latexmk.py can also watch '
-                        'source files for changes and rebuild automatically '
-                        'when changes happen.'),
+      long_description=get_long_description(),
       author='Jan Kanis',
       author_email='jan.code@jankanis.nl',
-      url='http://bitbucket.org/JanKanis/latexmake',
+      url='http://bitbucket.org/JanKanis/latexmake/',
       license='GPLv3+',
       platforms='any',
       classifiers=['Development Status :: 4 - Beta',
@@ -25,6 +31,7 @@ setup(
                    'License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)',
                    'Operating System :: OS Independent',
                    'Programming Language :: Python',
+                   'Programming Language :: Python :: 3',
                    'Topic :: Printing',
                    'Topic :: Text Processing :: Markup :: LaTeX'],
 

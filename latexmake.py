@@ -5,12 +5,28 @@
     latexmake
     ~~~~~~~~~
 
-    Python module for latexmk.py which completely automates
-    the process of generating a LaTeX document.
+    Python module for latexmake which completely automates the process of
+    generating a LaTeX document.
 
     :copyright: (c) 2012-2013 by Marc Schlaich and Jan Kanis
     :license: GPL version 3 or later, see LICENSE for more details.
 '''
+
+'''
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+'''
+
 
 from os import path
 from io import open
@@ -179,7 +195,7 @@ class LatexMaker (object):
             return False
 
         if (re.search('No file %s.bbl.' % self.project_name, self.out) or
-            re.search('LaTeX Warning: Citation .* undefined', self.out)):
+                re.search('LaTeX Warning: Citation .* undefined', self.out)):
             return True
 
         if old_cite_counter != self.generate_citation_counter():
@@ -218,7 +234,7 @@ class LatexMaker (object):
 
             error = '\n'.join(
                 [error.replace('\r', '').strip() for error
-                in chain(*errors) if error.strip()]
+                 in chain(*errors) if error.strip()]
             )
             
             self.log.error(error)
@@ -274,6 +290,7 @@ class LatexMaker (object):
             _fatal_error(NO_LATEX_ERROR % self.latex_cmd, error=e)
 
         self.latex_run_counter += 1
+
         return self.check_errors()
 
     def bibtex_run(self):
@@ -429,7 +446,6 @@ class LatexMaker (object):
             self.log.info(msg)
             if self.opt.notify:
                 notify(msg, icon='face-smile')
-
 
 class PollEvent (object):
     def __init__(self, path, mask):
@@ -705,12 +721,13 @@ def main():
     a new instance of L{LatexMaker}.
     '''
 
-    # Read description from doc. Add a space because argparse removes empty 
-    # trailing lines from the description. 
-    doc_text = dedent(__doc__.split('\n#', 1)[0]) + ' '
+    # Read description from doc, inserting the version number. Add a space
+    # because argparse removes empty trailing lines from the description.
+    doctext1, *doctext2 = dedent(__doc__).partition('\n:copyright:')
+    doctext = ''.join([doctext1, '\n:version: {}'.format(__version__)] + doctext2) + ' '
 
-    parser = argparse.ArgumentParser(description=doc_text, formatter_class=
-                              argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=doctext,
+                          formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('filename', default=None, nargs='?', 
                       help='''input filename. If omitted the current directory
                             will be searched for a single *.tex file. Specify 

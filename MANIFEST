@@ -1,2 +1,2 @@
-latexmk.py
+latexmake.py
 setup.py
