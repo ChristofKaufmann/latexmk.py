@@ -584,10 +584,10 @@ class LatexWatcher (object):
         # wait a little since there are often multiple events close together
         time.sleep(0.1)
         # clear any additional events
-        self.watcher.read(0)
+        events +=  [e for e in self.watcher.read(0) if e.mask & watchmask]
         self.log.debug("events:"+''.join(
             ("\n {} {}".format(e.path, '|'.join(inotify.decode_mask(e.mask))) for e in events)))
-        self.log.info("file(s) changed: "+' '.join((e.path for e in events)))
+        self.log.info("file(s) changed: "+' '.join(set(e.path for e in events)))
 
     def build(self):
         try:
