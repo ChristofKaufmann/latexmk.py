@@ -374,6 +374,7 @@ class LatexMaker (object):
         '''Run the LaTeX compilation.'''
         # store files
         self.old_dir = []
+        self.latex_run_counter = 0
         if self.opt.clean:
             self.old_dir = os.listdir('.')
 
@@ -394,6 +395,10 @@ class LatexMaker (object):
             if not self.need_latex_rerun():
                 break
             ok = self.latex_run()
+
+        if self.latex_run_counter >= MAX_RUNS:
+            self.log.error("Error: LaTeX takes more than {} runs"+
+                           "to converge, aborting".format(MAX_RUNS))
 
         if self.opt.check_cite:
             cites = set()
