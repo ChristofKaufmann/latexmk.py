@@ -70,10 +70,10 @@ FILE_NOT_FOUND_PATTERN = re.compile(rejoin(
 ), re.M)
 
 ERROR_PATTERN = re.compile(rejoin(
-    r'^! ((?:.|\n)*?)\n$',
+    r'^! (?:.|\n)*?\nl\.\d+.*\n.*$',
     # r'^! (.*\nl\..*)$',
-    r'^! (.*)$',
-    r'(No pages of output.)'
+    r'^! .*$',
+    r'No pages of output.'
 ), re.M)
 LATEX_RERUN_PATTERN = re.compile(rejoin(
                          r'LaTeX Warning: Reference .* undefined',
@@ -123,6 +123,7 @@ class LatexMaker (object):
             self.latex_cmd = 'latex'
 
         self.out = ''
+        self.exitcode = None
         self.glossaries = dict()
         self.latex_run_counter = 0
         self.bib_file = ''
@@ -225,15 +226,13 @@ class LatexMaker (object):
         Check if errors occured during a latex run by
         scanning the output.
         '''
-        errors = ERROR_PATTERN.findall(self.out)
-        # "errors" is a list of tuples
-        if not errors:
-            return True
-        else:
-            error = ['! Errors occurred:']
-            error += [e.replace('\r', '').strip() for e
-                      in chain(*errors) if e.strip()]
-            error.append('! See "%s.log" for details.' % self.project_name)
+        errors = [e.group().replace('\r', '').strip()
+                  for e in ERROR_PATTERN.finditer(self.out)
+                  if e.group().strip()]
+        if errors:
+            error = ['! Errors occurred:'] + errors + [
+                '! See "{p}.log" and "{p}.stdout" for details.'
+                .format(p=self.project_name)]
 
             if self.opt.notify:
                 notify('Latex error', '\n'.join(error[:10]))
@@ -242,6 +241,11 @@ class LatexMaker (object):
             if self.opt.exit_on_error:
                 raise LatexMkError('\n'.join(error))
             return False
+        elif self.exitcode != 0:
+            self.log.error("LaTeX exited with exitcode {}"
+                           .format(self.exitcode, ' '.join(cmd)))
+            return False
+        return True
 
     def generate_citation_counter(self):
         '''
@@ -279,10 +283,16 @@ class LatexMaker (object):
 
         if self.opt.texoutput:
             print('\n' + " beginning LaTeX output ".center(70, '=') + '\n')
-        # Not all relevant errors end up in the log, so we parse stderr. See 
-        # the definition of LATEX_RERUN_PATTERN for details. 
+        # Not all relevant errors end up in the log, so we parse stdout/stderr.
+        # See the definition of LATEX_RERUN_PATTERN for details.
         try:
+            # Contrary to what proc.stdout.read's help message says,
+            # subprocess's builtin PIPE object blocks on read until the
+            # subprocess is done and all the output can be returned. We want
+            # to handle subprocess output immediately as it becomes available
+            # so we use raw io operations.
             pread, pwrite = os.pipe()
+            outfile = open(self.project_name+'.stdout', 'wb')
             proc = Popen(cmd, stdout=pwrite, stderr=subprocess.STDOUT)
             os.close(pwrite)
             output = []
@@ -291,12 +301,15 @@ class LatexMaker (object):
                 output.append(read)
                 if self.opt.texoutput:
                     sys.stdout.buffer.write(read)
+                outfile.write(read)
                 read = os.read(pread, 1024)
+            self.exitcode = proc.wait()
             self.out = b''.join(output).decode('utf-8', 'replace')
         except OSError as e:
             _fatal_error(NO_LATEX_ERROR % self.latex_cmd, error=e)
         finally:
             os.close(pread)
+            outfile.close()
         if self.opt.texoutput:
             print('\n' + " end LaTeX output ".center(70, '=') + '\n')
 
