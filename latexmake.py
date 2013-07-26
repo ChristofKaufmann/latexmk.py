@@ -277,13 +277,28 @@ class LatexMaker (object):
         cmd.append('{}.tex'.format(self.project_name))
         self.log.debug('Running '+' '.join(cmd))
 
+        if self.opt.texoutput:
+            print('\n' + " beginning LaTeX output ".center(70, '=') + '\n')
         # Not all relevant errors end up in the log, so we parse stderr. See 
         # the definition of LATEX_RERUN_PATTERN for details. 
         try:
-            proc = Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            self.out = proc.stdout.read().decode('utf-8', 'replace')
+            pread, pwrite = os.pipe()
+            proc = Popen(cmd, stdout=pwrite, stderr=subprocess.STDOUT)
+            os.close(pwrite)
+            output = []
+            read = os.read(pread, 1024)
+            while read:
+                output.append(read)
+                if self.opt.texoutput:
+                    sys.stdout.buffer.write(read)
+                read = os.read(pread, 1024)
+            self.out = b''.join(output).decode('utf-8', 'replace')
         except OSError as e:
             _fatal_error(NO_LATEX_ERROR % self.latex_cmd, error=e)
+        finally:
+            os.close(pread)
+        if self.opt.texoutput:
+            print('\n' + " end LaTeX output ".center(70, '=') + '\n')
 
         self.latex_run_counter += 1
 
