@@ -1,0 +1,15 @@
+Error:
+
+"""
+...
+! Missing $ inserted.
+<inserted text> 
+                $
+l.242 ...ic feature \texttt{"constraint_instance"}
+                                                   set to true.
+I've inserted a begin-math/end-math symbol since I think
+you left one out. Proceed, with fingers crossed.
+
+...
+"""
+

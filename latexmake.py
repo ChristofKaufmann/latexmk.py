@@ -53,15 +53,30 @@ __author__ = 'Marc Schlaich'
 __version__ = '0.5dev'
 __license__ = 'GPL3+'
 
+def rejoin(*args):
+  return '|'.join('(?:'+r+')' for r in args)
 
 BIB_PATTERN = re.compile(r'\\bibdata\{(.*)\}')
 CITE_PATTERN = re.compile(r'\\citation\{(.*)\}')
 BIBCITE_PATTERN = re.compile(r'\\bibcite\{(.*)\}\{(.*)\}')
 BIBENTRY_PATTERN = re.compile(r'@.*\{(.*),\s')
-ERROR_PATTERN = re.compile(r'(?:^! (.*\nl\..*)$)|(?:^! (.*)$)|'
-                            '(No pages of output.)', re.M)
-LATEX_RERUN_PATTERN = re.compile('|'.join(
-                        [r'LaTeX Warning: Reference .* undefined',
+FILE_NOT_FOUND_PATTERN = re.compile(rejoin(
+    r"^No file\s*(.*)\.$",
+    r"^! LaTeX Error: File `([^']*)' not found\.",
+    r".*?:\d*: LaTeX Error: File `([^']*)' not found\.",
+    r"^LaTeX Warning: File `([^']*)' not found",
+    r"^Package .* [fF]ile `([^']*)' not found",
+    r"Error: pdflatex \(file ([^\)]*)\): cannot find image file",
+), re.M)
+
+ERROR_PATTERN = re.compile(rejoin(
+    r'^! ((?:.|\n)*?)\n$',
+    # r'^! (.*\nl\..*)$',
+    r'^! (.*)$',
+    r'(No pages of output.)'
+), re.M)
+LATEX_RERUN_PATTERN = re.compile(rejoin(
+                         r'LaTeX Warning: Reference .* undefined',
                          r'LaTeX Warning: There were undefined references\.',
                          r'LaTeX Warning: Label\(s\) may have changed\.',
                          r'.*Warning:.*Rerun to get.*', 
@@ -74,7 +89,7 @@ LATEX_RERUN_PATTERN = re.compile('|'.join(
                         # PDFLaTeX are read in by XeLaTeX. Rerunning resolves 
                         # it.
                          r'\*\* WARNING \*\* Failed to convert input string to UTF16',
-                        ]))
+                         ))
 TEXLIPSE_MAIN_PATTERN = re.compile(r'^mainTexFile=(.*)(?:\.tex)$', re.M)
 
 LATEX_FLAGS = ['-interaction=nonstopmode', '-shell-escape', '--synctex=1']
@@ -215,21 +230,17 @@ class LatexMaker (object):
         if not errors:
             return True
         else:
-            self.log.error('! Errors occurred:')
+            error = ['! Errors occurred:']
+            error += [e.replace('\r', '').strip() for e
+                      in chain(*errors) if e.strip()]
+            error.append('! See "%s.log" for details.' % self.project_name)
 
-            error = '\n'.join(
-                [error.replace('\r', '').strip() for error
-                 in chain(*errors) if error.strip()]
-            )
-            
-            self.log.error(error)
-
-            self.log.error('! See "%s.log" for details.' % self.project_name)
+            if self.opt.notify:
+                notify('Latex error', '\n'.join(error[:10]))
+            self.log.error('\n'.join(error), extra={'show_on_desktop':False})
 
             if self.opt.exit_on_error:
-                raise LatexMkError('\n'.join((error, 
-                    'See "{}.log" for details.'.format(self.project_name))
-                ))
+                raise LatexMkError('\n'.join(error))
             return False
 
     def generate_citation_counter(self):
@@ -617,15 +628,18 @@ class NotifyHandler (logging.Handler):
         logging.Handler.__init__(self, *args, level=level)
         self.notification = notify2.Notification('')
         self.timestamp = 0
-        self.errors = []
+        self.messages = []
 
     def emit(self, record):
+        if not getattr(record, 'show_on_desktop', True):
+            return
         now = time.time()
         if now - self.timestamp > 10:
-            del self.errors[:]
-        self.errors.append(record.getMessage())
+            del self.messages[:]
+
+        self.messages.append(record.getMessage())
         self.notification.update(
-            'LatexMk error:', '\n'.join(self.errors), icon='dialog-error')
+            'LatexMk error:', '\n'.join(self.messages), icon='dialog-error')
         self.notification.show()
         self.timestamp = now
 
@@ -823,7 +837,7 @@ def main():
             parser.error("Unable to use desktop notification ('-N', '--notify'). "
                 "Could not load package 'notify2'.")
         try:
-            notify2.init('LatexMk')
+            notify2.init('LatexMake')
             log.addHandler(NotifyHandler())
         except DBusException as e:
             log.error('Failed to initialize DBus: '+str(e))
