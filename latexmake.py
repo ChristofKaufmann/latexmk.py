@@ -53,6 +53,9 @@ __author__ = 'Marc Schlaich'
 __version__ = '0.5dev'
 __license__ = 'GPL3+'
 
+
+WATCH_FILETYPES = 'tex eps jpg png pdf'.split()
+
 def rejoin(*args):
   return '|'.join('(?:'+r+')' for r in args)
 
@@ -579,7 +582,7 @@ class LatexWatcher (object):
                 l = l.rstrip('\n')
                 if not l.startswith('INPUT '):
                     continue
-                if self.args.texonly and not l.endswith('.tex'):
+                if self.args.texonly and not l.endswith(self.args.watchtypes):
                     continue
                 pth = l.split(' ', 1)[1]
                 if not self.args.watch_system:
@@ -824,6 +827,9 @@ def main():
     parser.add_argument('--watchfile', 
                       dest='watchfiles', nargs='+', default=[],
                       help='Also watch these files for changes.')
+    parser.add_argument('--watchtype', 
+                      dest='watchtypes', nargs='+', default=[],
+                      help='Also watch files with these extensions if latex uses them.')
     parser.add_argument('--watchmethod', 
                       nargs=1, choices=['inotify', 'poll'], default='inotify',
                       help='Specify the method used to detect file changes.')
@@ -853,6 +859,8 @@ def main():
     log.setLevel(args.verbosity)
 
     log.debug('arguments: '+str(args))
+
+    args.watchtypes = tuple(WATCH_FILETYPES + args.watchtypes)
 
     if args.watch:
         args.continuous = True
