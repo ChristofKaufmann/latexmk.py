@@ -439,8 +439,8 @@ class LatexMaker (object):
             ok = self.latex_run()
 
         if self.latex_run_counter >= MAX_RUNS:
-            self.log.error("Error: LaTeX takes more than {} runs"+
-                           "to converge, aborting".format(MAX_RUNS))
+            self.log.error(("Error: LaTeX takes more than {} runs "+
+                            "to converge, aborting").format(MAX_RUNS))
 
         if self.opt.check_cite:
             cites = set()
