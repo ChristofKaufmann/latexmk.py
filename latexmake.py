@@ -49,8 +49,8 @@ try:
 except ImportError:
     notify2 = None
 
-__author__ = 'Marc Schlaich'
-__version__ = '0.5dev'
+__author__ = 'Jan Kanis'
+__version__ = '0.6dev'
 __license__ = 'GPL3+'
 
 

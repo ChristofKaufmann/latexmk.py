@@ -15,7 +15,8 @@ a project when changes happen.
 
 URL: http://bitbucket.org/JanKanis/latexmake/
 
-Based on latexmk.py at https://github.com/schlamar/latexmk.py
+Latexmk.py was originally written by Marc Schlaich. His (now unmaintained)
+version is available at https://github.com/schlamar/latexmk.py
 
 Inspired by http://ctan.tug.org/tex-archive/support/latexmk/
 
