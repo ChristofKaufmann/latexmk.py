@@ -13,3 +13,24 @@ you left one out. Proceed, with fingers crossed.
 ...
 """
 
+"""
+(./outline.out) (/usr/share/texmf/tex/latex/lm/omllmm.fd)
+(/usr/share/texmf/tex/latex/lm/omslmsy.fd)
+(/usr/share/texmf/tex/latex/lm/omxlmex.fd)
+(/usr/share/texmf-texlive/tex/latex/amsfonts/umsa.fd)
+(/usr/share/texmf-texlive/tex/latex/amsfonts/umsb.fd) [1] [2]
+(/usr/share/texmf/tex/latex/lm/t1lmtt.fd)
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+[3] [4]
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+! Undefined control sequence.
+l.268 \foobarne
+               
+[5] [6] [7] (./outline.aux) )
+(see the transcript file for additional information)
+Output written on outline.pdf (7 pages).
+"""
