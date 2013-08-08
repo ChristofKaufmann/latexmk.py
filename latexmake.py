@@ -474,7 +474,7 @@ class LatexMaker (object):
             self.open_preview()
 
         if ok:
-            msg = "{}.tex compiled".format(self.project_name)
+            msg = "{}.tex compiled\n".format(self.project_name)
             self.log.info(msg)
             if self.opt.notify:
                 notify(msg, icon='face-smile')
