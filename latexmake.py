@@ -433,12 +433,14 @@ class LatexMaker (object):
             self.bibtex_run()
             ok = self.latex_run()
 
+        overrun = True
         while (self.latex_run_counter < MAX_RUNS):
             if not self.need_latex_rerun():
+                overrun = False
                 break
             ok = self.latex_run()
 
-        if self.latex_run_counter >= MAX_RUNS:
+        if overrun:
             self.log.error(("Error: LaTeX takes more than {} runs "+
                             "to converge, aborting").format(MAX_RUNS))
 
