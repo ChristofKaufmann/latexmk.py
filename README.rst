@@ -13,7 +13,7 @@ Latexmake can run as a custom builder for the Eclipse-Plugin
 background watching source files for changes and rebuilding 
 a project when changes happen. 
 
-URL: http://bitbucket.org/JanKanis/latexmake/
+URL: http://bitbucket.org/JanKanis/latexmake.py/
 
 Latexmk.py was originally written by Marc Schlaich. His (now unmaintained)
 version is available at https://github.com/schlamar/latexmk.py
@@ -23,6 +23,8 @@ Inspired by http://ctan.tug.org/tex-archive/support/latexmk/
 
 Installation
 ------------
+
+This new branch of latexmake.py is not yet available on PyPI. Once it is, you can install it with the following instructions. 
 
 Preferable via pip::
 

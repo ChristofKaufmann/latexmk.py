@@ -34,3 +34,12 @@ l.268 \foobarne
 (see the transcript file for additional information)
 Output written on outline.pdf (7 pages).
 """
+
+
+Bug:
+
+missing file should be added to watchlist. 
+
+notify for "LaTeX Warning: There were multiply-defined labels."
+
+Missing references: latexmake should display what references + on what lines are missing. 
