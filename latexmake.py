@@ -82,6 +82,7 @@ LATEX_RERUN_PATTERN = re.compile(rejoin(
                          r'LaTeX Warning: Reference .* undefined',
                          r'LaTeX Warning: There were undefined references\.',
                          r'LaTeX Warning: Label\(s\) may have changed\.',
+                         r'Package natbib Warning: Citation .* undefined',
                          r'.*Warning:.*Rerun to get.*', 
                          r'No file .*(\.toc|\.lof)\.',
                         # This pattern can occur when using XeLaTeX. It is only 
