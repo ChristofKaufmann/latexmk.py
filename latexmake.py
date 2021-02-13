@@ -225,7 +225,7 @@ class LatexMaker (object):
             name, ext_i, ext_o = match.groups()
             self.glossaries[name] = (ext_i, ext_o)
 
-    def check_errors(self):
+    def check_errors(self, cmd):
         '''
         Check if errors occured during a latex run by
         scanning the output.
@@ -319,7 +319,7 @@ class LatexMaker (object):
 
         self.latex_run_counter += 1
 
-        return self.check_errors()
+        return self.check_errors(cmd)
 
     def bibtex_run(self):
         '''
