@@ -418,9 +418,6 @@ class LatexMaker (object):
         # store files
         self.old_dir = []
         self.latex_run_counter = 0
-        if self.opt.clean:
-            self.old_dir = os.listdir('.')
-
         cite_counter, toc_sha, gloss_files = self._read_latex_files()
 
         ok = self.latex_run()
@@ -462,16 +459,14 @@ class LatexMaker (object):
                     self.log.warn('Bib entry not cited: "%s"' % name)
 
         if self.opt.clean:
-            ending = '.dvi'
-            if self.opt.pdf:
-                ending = '.pdf'
-
-            for fname in os.listdir('.'):
-                if not (fname in self.old_dir or fname.endswith(ending)):
-                    try:
-                        os.remove(fname)
-                    except IOError:
-                        pass
+            temp_file_exts = '.acn .aux .bit .blg .fdb_latexmk .fls .glo .glx .gxg .gxs .idx .ilg .ind .ist .lof .log .lot .nav .out .run.xml .snm .stdout .svn .synctex.gz .toc .url .vrb'.split()
+            path_wo_ext = os.path.splitext(self.project_name)[0] # example: out/main.tex --> out/main
+            files_to_remove = [path_wo_ext + ext for ext in temp_file_exts if os.path.isfile(path_wo_ext + ext)]
+            for fname in files_to_remove:
+                try:
+                    os.remove(fname)
+                except IOError:
+                    pass
 
         if self.opt.preview:
             self.open_preview()
